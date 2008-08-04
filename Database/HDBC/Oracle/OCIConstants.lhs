@@ -69,9 +69,10 @@ to change these in a hurry (that would break compiled programs, wouldn't it?).
 >   , oci_ATTR_TRANS
 >   , oci_ATTR_ROW_COUNT
 >   , oci_ATTR_PREFETCH_ROWS
+>   , oci_ATTR_PARAM_COUNT
 >   , oci_ATTR_USERNAME
 >   , oci_ATTR_PASSWORD
->   ] = [5,6,7,8,9,11,22,23] :: [CInt]
+>   ] = [5,6,7,8,9,11,18,22,23] :: [CInt]
 
 ** Authentication options:
 
