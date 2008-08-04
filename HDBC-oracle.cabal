@@ -1,0 +1,33 @@
+Name: HDBC-oracle
+Version: 0.1
+License: LGPL
+Maintainer: Thiago Arrais <thiago.arrais@gmail.com>
+Author: Thiago Arrais
+Copyright: Copyright (c) 2008 Thiago Arrais
+license-file: COPYRIGHT
+extra-source-files: COPYING
+synopsis: Oracle (OCI) driver for HDBC
+Description: This is the Oracle driver for HDBC, the generic
+ database access system for Haskell
+Stability: Experimental
+Build-Type: Simple
+Cabal-Version: >=1.2
+
+Flag splitBase
+  description: Choose the new smaller, split-up package.
+
+Library
+  if flag(splitBase)
+    Build-Depends: base>=3, bytestring
+  else
+    Build-Depends: base<3
+  Build-Depends: mtl, time, old-time, HDBC>=1.1.0
+
+  include-dirs: .
+  GHC-Options: -fglasgow-exts
+  Exposed-Modules: Database.HDBC.Oracle
+  Other-Modules: Database.HDBC.Oracle.OCIFunctions,
+                 Database.HDBC.Oracle.OCIConstants,
+                 Database.HDBC.Oracle.Util
+  Extensions: ExistentialQuantification,
+              ForeignFunctionInterface
