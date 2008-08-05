@@ -1,5 +1,6 @@
 module Database.HDBC.Oracle (connectOracle) where
 
+import Foreign.C.String(CString, peekCString)
 import Foreign.Ptr(castPtr)
 
 import Database.HDBC (IConnection(..), SqlValue)
@@ -9,7 +10,7 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           ColumnInfo, bufferToString, catchOCI,
                                           envCreate, terminate, defineByPos,
                                           serverAttach, serverDetach,
-                                          handleAlloc, handleFree,
+                                          handleAlloc, handleFree, getParam,
                                           setHandleAttr, getHandleAttr,
                                           setHandleAttrString, stmtPrepare,
                                           stmtExecute, stmtFetch,
@@ -21,7 +22,8 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_HTYPE_STMT, oci_ATTR_SERVER,
                                           oci_ATTR_USERNAME, oci_ATTR_PASSWORD,
                                           oci_ATTR_SESSION, oci_ATTR_TRANS,
-                                          oci_ATTR_PARAM_COUNT, oci_NO_DATA,
+                                          oci_ATTR_PARAM_COUNT, oci_ATTR_NAME,
+                                          oci_DTYPE_PARAM, oci_NO_DATA,
                                           oci_CRED_RDBMS, oci_SQLT_CHR)
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
@@ -85,9 +87,11 @@ executeOracle (OracleConnection _ err conn) stmthandle bindvars = do
     stmtExecute err conn stmthandle 0
     return 0
 
+getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
+
 fetchOracleRow :: OracleConnection -> StmtHandle -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmthandle = do
-    n <- getHandleAttr err (castPtr stmthandle) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
+    n <- getNumColumns err stmthandle
     cols <- mapM (\pos -> defineByPos err stmthandle pos 16000 oci_SQLT_CHR) [1..n]
     fr <- stmtFetch err stmthandle
     values <- mapM readValues cols
@@ -97,6 +101,13 @@ fetchOracleRow (OracleConnection _ err _) stmthandle = do
 
 finishOracle :: StmtHandle -> IO ()
 finishOracle = free
+
+getOracleColumnNames :: OracleConnection -> StmtHandle -> IO [String]
+getOracleColumnNames (OracleConnection _ err _) stmt = do
+    numColumns <- getNumColumns err stmt
+    colHandles <- mapM (getParam err stmt) [1..numColumns]
+    (ts::[CString]) <- mapM (\colHandle -> getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME) colHandles
+    mapM peekCString ts
 
 readValues :: ColumnInfo -> IO SqlValue
 readValues (_, buf, nullptr, sizeptr) = do
@@ -122,5 +133,5 @@ statementFor oraconn stmthandle =
                finish = finishOracle stmthandle,
                fetchRow = fetchOracleRow oraconn stmthandle,
                originalQuery = fail "Not implemented",
-               getColumnNames = fail "Not implemented",
+               getColumnNames = getOracleColumnNames oraconn stmthandle,
                describeResult = fail "Not implemented"}
