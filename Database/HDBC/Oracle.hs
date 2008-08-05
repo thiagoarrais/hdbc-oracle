@@ -1,6 +1,7 @@
 module Database.HDBC.Oracle (connectOracle) where
 
 import Foreign.C.String(CString, peekCString)
+import Foreign.C.Types(CInt)
 import Foreign.Ptr(castPtr)
 
 import Database.HDBC (IConnection(..), SqlValue)
@@ -24,10 +25,14 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_ATTR_USERNAME, oci_ATTR_PASSWORD,
                                           oci_ATTR_SESSION, oci_ATTR_TRANS,
                                           oci_ATTR_PARAM_COUNT, oci_ATTR_NAME,
+                                          oci_ATTR_DATA_TYPE,
                                           oci_DTYPE_PARAM, oci_NO_DATA,
-                                          oci_CRED_RDBMS, oci_SQLT_CHR)
+                                          oci_CRED_RDBMS,
+                                          oci_SQLT_CHR, oci_SQLT_AFC,
+                                          oci_SQLT_AVC)
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
+type ConversionInfo = (Int, ColumnInfo -> IO SqlValue)
 
 instance IConnection OracleConnection where
     disconnect = disconnectOracle
@@ -90,15 +95,30 @@ executeOracle (OracleConnection _ err conn) stmthandle bindvars = do
 
 getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
 
+dtypeConversion :: [(CInt, ConversionInfo)]
+dtypeConversion = [(oci_SQLT_CHR, (16000, readString)),
+                   (oci_SQLT_AFC, (16000, readString)),
+                   (oci_SQLT_AVC, (16000, readString))]
+
 fetchOracleRow :: OracleConnection -> StmtHandle -> IO (Maybe [SqlValue])
-fetchOracleRow (OracleConnection _ err _) stmthandle = do
-    n <- getNumColumns err stmthandle
-    cols <- mapM (\pos -> defineByPos err stmthandle pos 16000 oci_SQLT_CHR) [1..n]
-    fr <- stmtFetch err stmthandle
-    values <- mapM readValues cols
+fetchOracleRow (OracleConnection _ err _) stmt = do
+    numColumns <- getNumColumns err stmt
+    readCols <- flip mapM [1..numColumns] $ \col -> do
+        colHandle <- getParam err stmt col
+        dtype <- getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_DATA_TYPE
+        let Just (size, reader) = lookup dtype dtypeConversion
+        colinfo <- defineByPos err stmt col size dtype
+        return (reader colinfo)
+    fr <- stmtFetch err stmt
     if fr == oci_NO_DATA
-     then finishOracle stmthandle >> return Nothing
-     else return (Just values)
+     then finishOracle stmt >> return Nothing
+     else return . Just =<< sequence readCols
+
+readString :: ColumnInfo -> IO SqlValue
+readString (_, buf, nullptr, sizeptr) = do
+    mstr <- bufferToString (undefined, buf, nullptr, sizeptr)
+    let Just str = mstr
+    return $ SqlString str
 
 finishOracle :: StmtHandle -> IO ()
 finishOracle = free
@@ -111,12 +131,6 @@ getOracleColumnNames (OracleConnection _ err _) stmt = do
         str <- peekCString =<< getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
         free colHandle
         return str
-
-readValues :: ColumnInfo -> IO SqlValue
-readValues (_, buf, nullptr, sizeptr) = do
-    mstr <- bufferToString (undefined, buf, nullptr, sizeptr)
-    let Just str = mstr
-    return $ SqlString str
 
 createHandle htype env = handleAlloc htype (castPtr env) >>= return.castPtr
 disposeHandle htype = handleFree htype . castPtr

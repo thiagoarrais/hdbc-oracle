@@ -69,7 +69,8 @@ to change these in a hurry (that would break compiled programs, wouldn't it?).
 
 | Found in $ORAHOME\/oci\/include\/oci.h
 
-> [ oci_ATTR_NAME
+> [ oci_ATTR_DATA_TYPE
+>   , oci_ATTR_NAME
 >   , oci_ATTR_ENV
 >   , oci_ATTR_SERVER
 >   , oci_ATTR_SESSION
@@ -79,7 +80,7 @@ to change these in a hurry (that would break compiled programs, wouldn't it?).
 >   , oci_ATTR_PARAM_COUNT
 >   , oci_ATTR_USERNAME
 >   , oci_ATTR_PASSWORD
->   ] = [4,5,6,7,8,9,11,18,22,23] :: [CInt]
+>   ] = [2,4,5,6,7,8,9,11,18,22,23] :: [CInt]
 
 ** Authentication options:
 
