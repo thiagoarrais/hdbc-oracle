@@ -134,6 +134,7 @@ If we can't derive Typeable then the following code should do the trick:
 
 
 > foreign import ccall "oci.h OCIParamGet" ociParamGet :: OCIHandle -> CInt -> ErrorHandle -> Ptr OCIHandle -> CInt -> IO CInt
+> foreign import ccall "oci.h OCIDescriptorFree" ociDescriptorFree :: OCIHandle -> CInt -> IO CInt
 > foreign import ccall "oci.h OCIAttrGet" ociAttrGet
 >   :: OCIHandle -> CInt -> BufferPtr -> Ptr CInt -> CInt -> ErrorHandle -> IO CInt
 > foreign import ccall "oci.h OCIAttrSet" ociAttrSet
@@ -348,6 +349,10 @@ Deref'ing it returns that value immediately, rather than a Ptr to that value.
 >   rc <- ociParamGet (castPtr stmt) oci_HTYPE_STMT err ptr (mkCInt posn)
 >   testForErrorWithPtr rc "getParam" (castPtr ptr)
 
+> descriptorFree :: CInt -> OCIHandle -> IO ()
+> descriptorFree descriptorType ptr = do
+>    rc <- ociDescriptorFree ptr descriptorType
+>    testForError rc "free frscriptor" ()
 
 ---------------------------------------------------------------------------------
 -- ** Connecting and detaching
@@ -358,7 +363,7 @@ Deref'ing it returns that value immediately, rather than a Ptr to that value.
 but the 'ConnHandle' returned is not valid.
 In this case we have to change 'Database.Oracle.OCIConstants.oci_SUCCESS_WITH_INFO'
 to 'Database.Oracle.OCIConstants.oci_ERROR',
-so that the error handling code will catch it and abort. 
+so that the error handling code will catch it and abort.
 I don't know why the handle returned isn't valid,
 as the logon process should be able to complete successfully in this case.
 

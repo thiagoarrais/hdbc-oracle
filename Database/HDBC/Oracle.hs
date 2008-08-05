@@ -7,7 +7,8 @@ import Database.HDBC (IConnection(..), SqlValue)
 import Database.HDBC.Statement (Statement(..), SqlValue(..))
 import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           ServerHandle, SessHandle, StmtHandle,
-                                          ColumnInfo, bufferToString, catchOCI,
+                                          ColumnInfo, ParamHandle,
+                                          bufferToString, catchOCI,
                                           envCreate, terminate, defineByPos,
                                           serverAttach, serverDetach,
                                           handleAlloc, handleFree, getParam,
@@ -15,7 +16,7 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           setHandleAttrString, stmtPrepare,
                                           stmtExecute, stmtFetch,
                                           sessionBegin, sessionEnd,
-                                          formatErrorMsg)
+                                          descriptorFree, formatErrorMsg)
 import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_HTYPE_SVCCTX, oci_HTYPE_SESSION,
                                           oci_HTYPE_TRANS, oci_HTYPE_ENV,
@@ -107,7 +108,9 @@ getOracleColumnNames (OracleConnection _ err _) stmt = do
     numColumns <- getNumColumns err stmt
     flip mapM [1..numColumns] $ \col -> do
         colHandle <- getParam err stmt col
-        peekCString =<< getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
+        str <- peekCString =<< getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
+        free colHandle
+        return str
 
 readValues :: ColumnInfo -> IO SqlValue
 readValues (_, buf, nullptr, sizeptr) = do
@@ -117,6 +120,7 @@ readValues (_, buf, nullptr, sizeptr) = do
 
 createHandle htype env = handleAlloc htype (castPtr env) >>= return.castPtr
 disposeHandle htype = handleFree htype . castPtr
+disposeDescriptor = descriptorFree oci_DTYPE_PARAM . castPtr
 
 class FreeableHandle h where free :: h -> IO ()
 
@@ -126,6 +130,7 @@ instance FreeableHandle ServerHandle where free = disposeHandle oci_HTYPE_SERVER
 instance FreeableHandle ConnHandle where free = disposeHandle oci_HTYPE_SVCCTX
 instance FreeableHandle SessHandle where free = disposeHandle oci_HTYPE_SESSION
 instance FreeableHandle StmtHandle where free = disposeHandle oci_HTYPE_STMT
+instance FreeableHandle ParamHandle where free = disposeDescriptor
 
 statementFor oraconn stmthandle =
     Statement {execute = executeOracle oraconn stmthandle,
