@@ -105,9 +105,9 @@ finishOracle = free
 getOracleColumnNames :: OracleConnection -> StmtHandle -> IO [String]
 getOracleColumnNames (OracleConnection _ err _) stmt = do
     numColumns <- getNumColumns err stmt
-    colHandles <- mapM (getParam err stmt) [1..numColumns]
-    (ts::[CString]) <- mapM (\colHandle -> getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME) colHandles
-    mapM peekCString ts
+    flip mapM [1..numColumns] $ \col -> do
+        colHandle <- getParam err stmt col
+        peekCString =<< getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
 
 readValues :: ColumnInfo -> IO SqlValue
 readValues (_, buf, nullptr, sizeptr) = do
