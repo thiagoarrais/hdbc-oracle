@@ -74,7 +74,6 @@ disconnectOracle (OracleConnection env err conn) = do
     free conn
     free err
     free env
-    terminate
 
 prepareOracle oraconn@(OracleConnection env err conn) query = do
     stmthandle <- createHandle oci_HTYPE_STMT env
