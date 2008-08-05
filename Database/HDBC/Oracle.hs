@@ -81,7 +81,7 @@ disconnectOracle (OracleConnection env err conn) = do
 prepareOracle oraconn@(OracleConnection env err conn) query = do
     stmthandle <- createHandle oci_HTYPE_STMT env
     stmtPrepare err stmthandle query
-    return (statementFor oraconn stmthandle)
+    return (statementFor oraconn stmthandle query)
 
 executeOracle :: OracleConnection -> StmtHandle -> [SqlValue] -> IO Integer
 executeOracle (OracleConnection _ err conn) stmthandle bindvars = do
@@ -132,11 +132,11 @@ instance FreeableHandle SessHandle where free = disposeHandle oci_HTYPE_SESSION
 instance FreeableHandle StmtHandle where free = disposeHandle oci_HTYPE_STMT
 instance FreeableHandle ParamHandle where free = disposeDescriptor
 
-statementFor oraconn stmthandle =
+statementFor oraconn stmthandle query =
     Statement {execute = executeOracle oraconn stmthandle,
                executeMany = \_ -> fail "Not implemented",
                finish = finishOracle stmthandle,
                fetchRow = fetchOracleRow oraconn stmthandle,
-               originalQuery = fail "Not implemented",
+               originalQuery = query,
                getColumnNames = getOracleColumnNames oraconn stmthandle,
                describeResult = fail "Not implemented"}
