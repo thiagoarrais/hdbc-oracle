@@ -25,6 +25,7 @@ Library
 
   include-dirs: .
   GHC-Options: -fglasgow-exts
+  Extra-Libraries: oci
   Exposed-Modules: Database.HDBC.Oracle
   Other-Modules: Database.HDBC.Oracle.OCIFunctions,
                  Database.HDBC.Oracle.OCIConstants,

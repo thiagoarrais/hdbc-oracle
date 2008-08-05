@@ -3,27 +3,28 @@ module Database.HDBC.Oracle (connectOracle) where
 import Foreign.Ptr(castPtr)
 
 import Database.HDBC (IConnection(..), SqlValue)
-import Database.HDBC.Statement (Statement(..))
+import Database.HDBC.Statement (Statement(..), SqlValue(..))
 import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           ServerHandle, SessHandle, StmtHandle,
+                                          ColumnInfo, bufferToString, catchOCI,
                                           envCreate, terminate, defineByPos,
                                           serverAttach, serverDetach,
                                           handleAlloc, handleFree,
                                           setHandleAttr, getHandleAttr,
                                           setHandleAttrString, stmtPrepare,
-                                          stmtExecute,
-                                          sessionBegin, sessionEnd)
+                                          stmtExecute, stmtFetch,
+                                          sessionBegin, sessionEnd,
+                                          formatErrorMsg)
 import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_HTYPE_SVCCTX, oci_HTYPE_SESSION,
                                           oci_HTYPE_TRANS, oci_HTYPE_ENV,
                                           oci_HTYPE_STMT, oci_ATTR_SERVER,
                                           oci_ATTR_USERNAME, oci_ATTR_PASSWORD,
                                           oci_ATTR_SESSION, oci_ATTR_TRANS,
-                                          oci_ATTR_PARAM_COUNT,
-                                          oci_CRED_RDBMS)
+                                          oci_ATTR_PARAM_COUNT, oci_NO_DATA,
+                                          oci_CRED_RDBMS, oci_SQLT_CHR)
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
-                      | NullConnection
 
 instance IConnection OracleConnection where
     disconnect = disconnectOracle
@@ -48,7 +49,7 @@ connectOracle user pswd dbname = do
     server <- createHandle oci_HTYPE_SERVER env
     serverAttach err server dbname
     conn <- logToServer server user pswd env err
-    return NullConnection
+    return (OracleConnection env err conn)
 
 logToServer :: ServerHandle -> String -> String -> EnvHandle -> ErrorHandle -> IO ConnHandle
 logToServer srv user pswd env err = do
@@ -87,9 +88,22 @@ executeOracle (OracleConnection _ err conn) stmthandle bindvars = do
 
 fetchOracleRow :: OracleConnection -> StmtHandle -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmthandle = do
-    (n :: Int) <- getHandleAttr err (castPtr stmthandle) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
-    cols <- mapM (\pos -> defineByPos err stmthandle pos 0 0) [1..n]
-    return Nothing
+    n <- getHandleAttr err (castPtr stmthandle) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
+    cols <- mapM (\pos -> defineByPos err stmthandle pos 16000 oci_SQLT_CHR) [1..n]
+    fr <- stmtFetch err stmthandle
+    values <- mapM readValues cols
+    if fr == oci_NO_DATA
+     then finishOracle stmthandle >> return Nothing
+     else return (Just values)
+
+finishOracle :: StmtHandle -> IO ()
+finishOracle = free
+
+readValues :: ColumnInfo -> IO SqlValue
+readValues (_, buf, nullptr, sizeptr) = do
+    mstr <- bufferToString (undefined, buf, nullptr, sizeptr)
+    let Just str = mstr
+    return $ SqlString str
 
 createHandle htype env = handleAlloc htype (castPtr env) >>= return.castPtr
 disposeHandle htype = handleFree htype . castPtr
@@ -101,11 +115,12 @@ instance FreeableHandle ErrorHandle where free = disposeHandle oci_HTYPE_ERROR
 instance FreeableHandle ServerHandle where free = disposeHandle oci_HTYPE_SERVER
 instance FreeableHandle ConnHandle where free = disposeHandle oci_HTYPE_SVCCTX
 instance FreeableHandle SessHandle where free = disposeHandle oci_HTYPE_SESSION
+instance FreeableHandle StmtHandle where free = disposeHandle oci_HTYPE_STMT
 
 statementFor oraconn stmthandle =
     Statement {execute = executeOracle oraconn stmthandle,
                executeMany = \_ -> fail "Not implemented",
-               finish = fail "Not implemented",
+               finish = finishOracle stmthandle,
                fetchRow = fetchOracleRow oraconn stmthandle,
                originalQuery = fail "Not implemented",
                getColumnNames = fail "Not implemented",
