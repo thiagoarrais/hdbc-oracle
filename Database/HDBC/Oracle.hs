@@ -1,5 +1,7 @@
 module Database.HDBC.Oracle (connectOracle) where
 
+import Data.Maybe(fromJust)
+import System.Time(ClockTime(TOD), toClockTime)
 import Foreign.C.String(CString, peekCString)
 import Foreign.C.Types(CInt)
 import Foreign.Ptr(castPtr)
@@ -8,8 +10,7 @@ import Database.HDBC (IConnection(..), SqlValue)
 import Database.HDBC.Statement (Statement(..), SqlValue(..))
 import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           ServerHandle, SessHandle, StmtHandle,
-                                          ColumnInfo, ParamHandle,
-                                          bufferToString, catchOCI,
+                                          ColumnInfo, ParamHandle, catchOCI,
                                           envCreate, terminate, defineByPos,
                                           serverAttach, serverDetach,
                                           handleAlloc, handleFree, getParam,
@@ -17,7 +18,8 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           setHandleAttrString, stmtPrepare,
                                           stmtExecute, stmtFetch,
                                           sessionBegin, sessionEnd,
-                                          descriptorFree, formatErrorMsg)
+                                          descriptorFree, formatErrorMsg,
+                                          bufferToString, bufferToCaltime)
 import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_HTYPE_SVCCTX, oci_HTYPE_SESSION,
                                           oci_HTYPE_TRANS, oci_HTYPE_ENV,
@@ -29,7 +31,7 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_DTYPE_PARAM, oci_NO_DATA,
                                           oci_CRED_RDBMS,
                                           oci_SQLT_CHR, oci_SQLT_AFC,
-                                          oci_SQLT_AVC)
+                                          oci_SQLT_AVC, oci_SQLT_DAT)
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
 type ConversionInfo = (Int, ColumnInfo -> IO SqlValue)
@@ -98,7 +100,8 @@ getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATT
 dtypeConversion :: [(CInt, ConversionInfo)]
 dtypeConversion = [(oci_SQLT_CHR, (16000, readString)),
                    (oci_SQLT_AFC, (16000, readString)),
-                   (oci_SQLT_AVC, (16000, readString))]
+                   (oci_SQLT_AVC, (16000, readString)),
+                   (oci_SQLT_DAT, (7, readTime))]
 
 fetchOracleRow :: OracleConnection -> StmtHandle -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmt = do
@@ -114,11 +117,16 @@ fetchOracleRow (OracleConnection _ err _) stmt = do
      then finishOracle stmt >> return Nothing
      else return . Just =<< sequence readCols
 
-readString :: ColumnInfo -> IO SqlValue
-readString (_, buf, nullptr, sizeptr) = do
-    mstr <- bufferToString (undefined, buf, nullptr, sizeptr)
-    let Just str = mstr
-    return $ SqlString str
+readString = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined, buf, nullptr, sizeptr))
+                       SqlString
+
+readTime = readValue (\(_, buf, nullptr, sizeptr) -> bufferToCaltime nullptr buf)
+                     (\time -> let TOD secs _ = toClockTime time in SqlEpochTime secs)
+
+readValue ::    (ColumnInfo -> IO (Maybe a))
+             -> (a -> SqlValue)
+             -> ColumnInfo -> IO SqlValue
+readValue read convert colinfo = read colinfo >>= return . convert . fromJust
 
 finishOracle :: StmtHandle -> IO ()
 finishOracle = free
