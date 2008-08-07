@@ -5,6 +5,8 @@ import System.Time(ClockTime(TOD), toClockTime)
 import Foreign.C.String(CString, peekCString)
 import Foreign.C.Types(CInt)
 import Foreign.Ptr(castPtr)
+import Foreign.ForeignPtr(withForeignPtr)
+import Numeric(showHex)
 
 import Database.HDBC (IConnection(..), SqlValue)
 import Database.HDBC.Statement (Statement(..), SqlValue(..))
@@ -19,7 +21,8 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           stmtExecute, stmtFetch,
                                           sessionBegin, sessionEnd,
                                           descriptorFree, formatErrorMsg,
-                                          bufferToString, bufferToCaltime)
+                                          bufferToString, bufferToCaltime,
+                                          bufferToDouble)
 import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_HTYPE_SVCCTX, oci_HTYPE_SESSION,
                                           oci_HTYPE_TRANS, oci_HTYPE_ENV,
@@ -31,10 +34,11 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_DTYPE_PARAM, oci_NO_DATA,
                                           oci_CRED_RDBMS,
                                           oci_SQLT_CHR, oci_SQLT_AFC,
-                                          oci_SQLT_AVC, oci_SQLT_DAT)
+                                          oci_SQLT_AVC, oci_SQLT_DAT,
+                                          oci_SQLT_NUM, oci_SQLT_FLT)
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
-type ConversionInfo = (Int, ColumnInfo -> IO SqlValue)
+type ConversionInfo = (CInt, Int, ColumnInfo -> IO SqlValue)
 
 instance IConnection OracleConnection where
     disconnect = disconnectOracle
@@ -98,19 +102,20 @@ executeOracle (OracleConnection _ err conn) stmthandle bindvars = do
 getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
 
 dtypeConversion :: [(CInt, ConversionInfo)]
-dtypeConversion = [(oci_SQLT_CHR, (16000, readString)),
-                   (oci_SQLT_AFC, (16000, readString)),
-                   (oci_SQLT_AVC, (16000, readString)),
-                   (oci_SQLT_DAT, (7, readTime))]
+dtypeConversion = [(oci_SQLT_CHR, (oci_SQLT_CHR, 16000, readString)),
+                   (oci_SQLT_AFC, (oci_SQLT_CHR, 16000, readString)),
+                   (oci_SQLT_AVC, (oci_SQLT_CHR, 16000, readString)),
+                   (oci_SQLT_DAT, (oci_SQLT_DAT, 7, readTime)),
+                   (oci_SQLT_NUM, (oci_SQLT_FLT, 8, readNumber))]
 
 fetchOracleRow :: OracleConnection -> StmtHandle -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmt = do
     numColumns <- getNumColumns err stmt
     readCols <- flip mapM [1..numColumns] $ \col -> do
         colHandle <- getParam err stmt col
-        dtype <- getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_DATA_TYPE
-        let Just (size, reader) = lookup dtype dtypeConversion
-        colinfo <- defineByPos err stmt col size dtype
+        itype <- getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_DATA_TYPE
+        let Just (otype, size, reader) = lookup itype dtypeConversion
+        colinfo <- defineByPos err stmt col size otype
         return (reader colinfo)
     fr <- stmtFetch err stmt
     if fr == oci_NO_DATA
@@ -122,6 +127,9 @@ readString = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined
 
 readTime = readValue (\(_, buf, nullptr, sizeptr) -> bufferToCaltime nullptr buf)
                      (\time -> let TOD secs _ = toClockTime time in SqlEpochTime secs)
+
+readNumber = readValue (\(_, buf, nullptr, sizeptr) -> bufferToDouble nullptr buf)
+                       SqlDouble
 
 readValue ::    (ColumnInfo -> IO (Maybe a))
              -> (a -> SqlValue)
