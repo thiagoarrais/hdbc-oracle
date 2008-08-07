@@ -35,7 +35,8 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_CRED_RDBMS,
                                           oci_SQLT_CHR, oci_SQLT_AFC,
                                           oci_SQLT_AVC, oci_SQLT_DAT,
-                                          oci_SQLT_NUM, oci_SQLT_FLT)
+                                          oci_SQLT_NUM, oci_SQLT_FLT,
+                                          oci_SQLT_LNG)
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
 type ConversionInfo = (CInt, Int, ColumnInfo -> IO SqlValue)
@@ -101,12 +102,16 @@ executeOracle (OracleConnection _ err conn) stmthandle bindvars = do
 
 getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
 
-dtypeConversion :: [(CInt, ConversionInfo)]
-dtypeConversion = [(oci_SQLT_CHR, (oci_SQLT_CHR, 16000, readString)),
-                   (oci_SQLT_AFC, (oci_SQLT_CHR, 16000, readString)),
-                   (oci_SQLT_AVC, (oci_SQLT_CHR, 16000, readString)),
-                   (oci_SQLT_DAT, (oci_SQLT_DAT, 7, readTime)),
-                   (oci_SQLT_NUM, (oci_SQLT_FLT, 8, readNumber))]
+dtypeConversion :: [([CInt], ConversionInfo)]
+dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG],
+                        (oci_SQLT_CHR, 16000, readString)),
+                   ([oci_SQLT_DAT], (oci_SQLT_DAT, 7, readTime)),
+                   ([oci_SQLT_NUM], (oci_SQLT_FLT, 8, readNumber))]
+
+-- TODO: Check if this exists in Prelude and move to utilities module
+search :: (a -> Bool) -> [(a, b)] -> Maybe b
+search _ [] = Nothing
+search p ((x,y):xys) = if p x then Just y else search p xys
 
 fetchOracleRow :: OracleConnection -> StmtHandle -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmt = do
@@ -114,7 +119,7 @@ fetchOracleRow (OracleConnection _ err _) stmt = do
     readCols <- flip mapM [1..numColumns] $ \col -> do
         colHandle <- getParam err stmt col
         itype <- getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_DATA_TYPE
-        let Just (otype, size, reader) = lookup itype dtypeConversion
+        let Just (otype, size, reader) = search (itype `elem`) dtypeConversion
         colinfo <- defineByPos err stmt col size otype
         return (reader colinfo)
     fr <- stmtFetch err stmt
