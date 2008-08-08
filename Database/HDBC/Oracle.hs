@@ -139,7 +139,7 @@ readNumber = readValue (\(_, buf, nullptr, sizeptr) -> bufferToDouble nullptr bu
 readValue ::    (ColumnInfo -> IO (Maybe a))
              -> (a -> SqlValue)
              -> ColumnInfo -> IO SqlValue
-readValue read convert colinfo = read colinfo >>= return . convert . fromJust
+readValue read convert colinfo = read colinfo >>= return . maybe SqlNull convert
 
 finishOracle :: StmtHandle -> IO ()
 finishOracle = free
