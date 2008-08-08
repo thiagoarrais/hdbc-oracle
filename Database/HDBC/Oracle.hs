@@ -1,12 +1,12 @@
 module Database.HDBC.Oracle (connectOracle) where
 
+import Data.Char
 import Data.Maybe(fromJust)
 import System.Time(ClockTime(TOD), toClockTime)
 import Foreign.C.String(CString, peekCString)
 import Foreign.C.Types(CInt)
 import Foreign.Ptr(castPtr)
 import Foreign.ForeignPtr(withForeignPtr)
-import Numeric(showHex)
 
 import Database.HDBC (IConnection(..), SqlValue)
 import Database.HDBC.Statement (Statement(..), SqlValue(..))
@@ -21,8 +21,7 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           stmtExecute, stmtFetch,
                                           sessionBegin, sessionEnd,
                                           descriptorFree, formatErrorMsg,
-                                          bufferToString, bufferToCaltime,
-                                          bufferToDouble)
+                                          bufferToString, bufferToCaltime)
 import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_HTYPE_SVCCTX, oci_HTYPE_SESSION,
                                           oci_HTYPE_TRANS, oci_HTYPE_ENV,
@@ -106,7 +105,7 @@ dtypeConversion :: [([CInt], ConversionInfo)]
 dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG],
                         (oci_SQLT_CHR, 16000, readString)),
                    ([oci_SQLT_DAT], (oci_SQLT_DAT, 7, readTime)),
-                   ([oci_SQLT_NUM], (oci_SQLT_FLT, 8, readNumber))]
+                   ([oci_SQLT_NUM], (oci_SQLT_CHR, 40, readNumber))]
 
 -- TODO: Check if this exists in Prelude and move to utilities module
 search :: (a -> Bool) -> [(a, b)] -> Maybe b
@@ -133,8 +132,25 @@ readString = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined
 readTime = readValue (\(_, buf, nullptr, sizeptr) -> bufferToCaltime nullptr buf)
                      (\time -> let TOD secs _ = toClockTime time in SqlEpochTime secs)
 
-readNumber = readValue (\(_, buf, nullptr, sizeptr) -> bufferToDouble nullptr buf)
-                       SqlDouble
+-- TODO: Move those to an utilities module
+strToSqlNum :: String -> SqlValue
+strToSqlNum str = if '.' `elem`str then SqlDouble (strToDouble str) else SqlInteger (strToInt str)
+
+strToInt :: String -> Integer
+strToInt [] = 0
+strToInt (c:cs) = toInteger (digitToInt c) * 10 ^ length cs + strToInt cs
+
+splitBy :: Eq a => a -> [a] -> ([a], [a])
+splitBy x xs = (takeWhile (/= x) xs, tail (dropWhile (/= x) xs))
+
+strToDouble :: String -> Double
+strToDouble str = fromIntegral integral + fraction
+    where (istr, fstr) = splitBy '.' str
+          integral = strToInt istr
+          fraction = fromIntegral (strToInt fstr) * 10 ^^ (-(length fstr))
+
+readNumber = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined, buf, nullptr, sizeptr))
+                       strToSqlNum
 
 readValue ::    (ColumnInfo -> IO (Maybe a))
              -> (a -> SqlValue)
