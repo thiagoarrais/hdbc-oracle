@@ -1,7 +1,8 @@
 module Database.HDBC.Oracle (connectOracle) where
 
+import Control.Concurrent.MVar(MVar, modifyMVar, modifyMVar_, newMVar, withMVar)
 import Data.Char
-import Data.Maybe(fromJust)
+import Data.Maybe(fromJust, isNothing)
 import System.Time(ClockTime(TOD), toClockTime)
 import Foreign.C.String(CString, peekCString)
 import Foreign.C.Types(CInt)
@@ -37,8 +38,13 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_SQLT_NUM, oci_SQLT_FLT,
                                           oci_SQLT_LNG)
 
-data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
+data StmtState = Prepared StmtHandle
+               | Executed StmtHandle [ConversionInfo] -- info on how to convert each value into a SqlValue
+               | Finished
+
 type ConversionInfo = (CInt, Int, ColumnInfo -> IO SqlValue)
+
+data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
 
 instance IConnection OracleConnection where
     disconnect = disconnectOracle
@@ -55,6 +61,9 @@ instance IConnection OracleConnection where
     dbTransactionSupport _ = False
     getTables _ = fail "Not implemented"
     describeTable _ _ = fail "Not implemented"
+
+handle (Prepared stmt) = stmt
+handle (Executed stmt _) = stmt
 
 connectOracle :: String -> String -> String -> IO OracleConnection
 connectOracle user pswd dbname = do
@@ -92,12 +101,22 @@ disconnectOracle (OracleConnection env err conn) = do
 prepareOracle oraconn@(OracleConnection env err conn) query = do
     stmthandle <- createHandle oci_HTYPE_STMT env
     stmtPrepare err stmthandle query
-    return (statementFor oraconn stmthandle query)
+    stmtvar <- newMVar (Prepared stmthandle)
+    return (statementFor oraconn stmtvar query)
 
-executeOracle :: OracleConnection -> StmtHandle -> [SqlValue] -> IO Integer
-executeOracle (OracleConnection _ err conn) stmthandle bindvars = do
-    stmtExecute err conn stmthandle 0
-    return 0
+executeOracle :: OracleConnection -> MVar StmtState -> [SqlValue] -> IO Integer
+executeOracle (OracleConnection _ err conn) stmtvar bindvars =
+    let exec stmtstate@(Executed _ _) = return (stmtstate, 0)
+        exec (Prepared stmt) = do
+            stmtExecute err conn stmt 0
+            numColumns <- getNumColumns err stmt
+            convinfos <- flip mapM [1..numColumns] $ \col -> do
+                colHandle <- getParam err stmt col
+                itype <- getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_DATA_TYPE
+                free colHandle
+                return . fromJust . search (itype `elem`) $ dtypeConversion
+            return (Executed stmt convinfos, 0)
+    in modifyMVar stmtvar exec
 
 getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
 
@@ -112,19 +131,20 @@ search :: (a -> Bool) -> [(a, b)] -> Maybe b
 search _ [] = Nothing
 search p ((x,y):xys) = if p x then Just y else search p xys
 
-fetchOracleRow :: OracleConnection -> StmtHandle -> IO (Maybe [SqlValue])
-fetchOracleRow (OracleConnection _ err _) stmt = do
-    numColumns <- getNumColumns err stmt
-    readCols <- flip mapM [1..numColumns] $ \col -> do
-        colHandle <- getParam err stmt col
-        itype <- getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_DATA_TYPE
-        let Just (otype, size, reader) = search (itype `elem`) dtypeConversion
-        colinfo <- defineByPos err stmt col size otype
-        return (reader colinfo)
-    fr <- stmtFetch err stmt
-    if fr == oci_NO_DATA
-     then finishOracle stmt >> return Nothing
-     else return . Just =<< sequence readCols
+fetchOracleRow :: OracleConnection -> MVar StmtState -> IO (Maybe [SqlValue])
+fetchOracleRow (OracleConnection _ err _) stmtvar =
+    let fetch (Prepared _) = fail "Trying to fetch before executing statement"
+        fetch (Executed stmt convinfos) = do
+            readCols <- mapM (\(col, (otype, size, reader)) ->
+                                  return . reader =<< defineByPos err stmt col size otype)
+                             (zip [1..(length convinfos)] convinfos)
+            fr <- stmtFetch err stmt
+            if fr == oci_NO_DATA
+             then return Nothing
+             else return . Just =<< sequence readCols
+    in do result <- withMVar stmtvar fetch
+          if isNothing result then finishOracle stmtvar else return ()
+          return result
 
 readString = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined, buf, nullptr, sizeptr))
                        SqlString
@@ -157,17 +177,19 @@ readValue ::    (ColumnInfo -> IO (Maybe a))
              -> ColumnInfo -> IO SqlValue
 readValue read convert colinfo = read colinfo >>= return . maybe SqlNull convert
 
-finishOracle :: StmtHandle -> IO ()
-finishOracle = free
+finishOracle :: MVar StmtState -> IO ()
+finishOracle = flip modifyMVar_ (\stmtstate -> free (handle stmtstate) >> return Finished)
 
-getOracleColumnNames :: OracleConnection -> StmtHandle -> IO [String]
-getOracleColumnNames (OracleConnection _ err _) stmt = do
-    numColumns <- getNumColumns err stmt
-    flip mapM [1..numColumns] $ \col -> do
-        colHandle <- getParam err stmt col
-        str <- peekCString =<< getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
-        free colHandle
-        return str
+getOracleColumnNames :: OracleConnection -> MVar StmtState -> IO [String]
+getOracleColumnNames (OracleConnection _ err _) stmtvar =
+    let getNames (Prepared _) = fail "Trying to read column names before executing"
+        getNames (Executed stmt convinfos) =
+            flip mapM [1..(length convinfos)] $ \col -> do
+                colHandle <- getParam err stmt col
+                str <- peekCString =<< getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
+                free colHandle
+                return str
+    in withMVar stmtvar getNames
 
 createHandle htype env = handleAlloc htype (castPtr env) >>= return.castPtr
 disposeHandle htype = handleFree htype . castPtr
@@ -183,11 +205,11 @@ instance FreeableHandle SessHandle where free = disposeHandle oci_HTYPE_SESSION
 instance FreeableHandle StmtHandle where free = disposeHandle oci_HTYPE_STMT
 instance FreeableHandle ParamHandle where free = disposeDescriptor
 
-statementFor oraconn stmthandle query =
-    Statement {execute = executeOracle oraconn stmthandle,
+statementFor oraconn stmtvar query =
+    Statement {execute = executeOracle oraconn stmtvar,
                executeMany = \_ -> fail "Not implemented",
-               finish = finishOracle stmthandle,
-               fetchRow = fetchOracleRow oraconn stmthandle,
+               finish = finishOracle stmtvar,
+               fetchRow = fetchOracleRow oraconn stmtvar,
                originalQuery = query,
-               getColumnNames = getOracleColumnNames oraconn stmthandle,
+               getColumnNames = getOracleColumnNames oraconn stmtvar,
                describeResult = fail "Not implemented"}
