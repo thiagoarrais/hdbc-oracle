@@ -36,7 +36,7 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_SQLT_CHR, oci_SQLT_AFC,
                                           oci_SQLT_AVC, oci_SQLT_DAT,
                                           oci_SQLT_NUM, oci_SQLT_FLT,
-                                          oci_SQLT_LNG)
+                                          oci_SQLT_LNG, oci_SQLT_STR)
 
 data StmtState = Prepared StmtHandle
                | Executed StmtHandle [ConversionInfo] -- info on how to convert each value into a SqlValue
@@ -122,9 +122,9 @@ getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATT
 
 dtypeConversion :: [([CInt], ConversionInfo)]
 dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG],
-                        (oci_SQLT_CHR, 16000, readString)),
+                        (oci_SQLT_STR, 16000, readString)),
                    ([oci_SQLT_DAT], (oci_SQLT_DAT, 7, readTime)),
-                   ([oci_SQLT_NUM], (oci_SQLT_CHR, 40, readNumber))]
+                   ([oci_SQLT_NUM], (oci_SQLT_STR, 40, readNumber))]
 
 -- TODO: Check if this exists in Prelude and move to utilities module
 search :: (a -> Bool) -> [(a, b)] -> Maybe b
