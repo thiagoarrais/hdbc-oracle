@@ -1,7 +1,7 @@
 module Database.HDBC.Oracle (connectOracle) where
 
 import Control.Concurrent.MVar(MVar, modifyMVar, modifyMVar_, newMVar, withMVar)
-import Data.Char
+import Data.Char(digitToInt, isDigit)
 import Data.Maybe(fromJust, isNothing)
 import System.Time(ClockTime(TOD), toClockTime)
 import Foreign.C.String(CString, peekCString)
@@ -153,19 +153,26 @@ readTime = readValue (\(_, buf, nullptr, sizeptr) -> bufferToCaltime nullptr buf
                      (\time -> let TOD secs _ = toClockTime time in SqlEpochTime secs)
 
 -- TODO: Move those to an utilities module
+sqlMultiply :: SqlValue -> Integer -> SqlValue
+sqlMultiply (SqlDouble x) y = SqlDouble (x * fromInteger y)
+sqlMultiply (SqlInteger n) m = SqlInteger (m * n)
+
 strToSqlNum :: String -> SqlValue
-strToSqlNum str = if '.' `elem`str then SqlDouble (strToDouble str) else SqlInteger (strToInt str)
+strToSqlNum str = sqlMultiply sqlabs sign
+    where sqlabs = if any (not . isDigit) strabs then SqlDouble (strToDouble strabs) else SqlInteger (strToInt strabs)
+          strabs = dropWhile (== '-') str
+          sign = if strabs == str then 1 else -1
 
 strToInt :: String -> Integer
 strToInt [] = 0
 strToInt (c:cs) = toInteger (digitToInt c) * 10 ^ length cs + strToInt cs
 
-splitBy :: Eq a => a -> [a] -> ([a], [a])
-splitBy x xs = (takeWhile (/= x) xs, tail (dropWhile (/= x) xs))
+splitBy :: (a -> Bool) -> [a] -> ([a], [a])
+splitBy p xs = (takeWhile (not.p) xs, tail (dropWhile (not.p) xs))
 
 strToDouble :: String -> Double
 strToDouble str = fromIntegral integral + fraction
-    where (istr, fstr) = splitBy '.' str
+    where (istr, fstr) = splitBy (not . isDigit) str
           integral = strToInt istr
           fraction = fromIntegral (strToInt fstr) * 10 ^^ (-(length fstr))
 
