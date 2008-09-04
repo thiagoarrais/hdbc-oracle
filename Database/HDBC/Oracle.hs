@@ -23,7 +23,8 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           stmtExecute, stmtFetch,
                                           sessionBegin, sessionEnd,
                                           descriptorFree, formatErrorMsg,
-                                          bufferToString, bufferToCaltime)
+                                          bufferToString, bufferToCaltime,
+                                          bufferToByteString)
 import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_HTYPE_SVCCTX, oci_HTYPE_SESSION,
                                           oci_HTYPE_TRANS, oci_HTYPE_ENV,
@@ -37,7 +38,8 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_SQLT_CHR, oci_SQLT_AFC,
                                           oci_SQLT_AVC, oci_SQLT_DAT,
                                           oci_SQLT_NUM, oci_SQLT_FLT,
-                                          oci_SQLT_LNG, oci_SQLT_STR)
+                                          oci_SQLT_LNG, oci_SQLT_STR,
+                                          oci_SQLT_BIN)
 
 data StmtState = Prepared StmtHandle
                | Executed StmtHandle [ConversionInfo] -- info on how to convert each value into a SqlValue
@@ -125,7 +127,8 @@ dtypeConversion :: [([CInt], ConversionInfo)]
 dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG],
                         (oci_SQLT_STR, 16000, readString)),
                    ([oci_SQLT_DAT], (oci_SQLT_DAT, 7, readTime)),
-                   ([oci_SQLT_NUM], (oci_SQLT_STR, 40, readNumber))]
+                   ([oci_SQLT_NUM], (oci_SQLT_STR, 40, readNumber)),
+                   ([oci_SQLT_BIN], (oci_SQLT_BIN, 2000, readBinary))]
 
 fetchOracleRow :: OracleConnection -> MVar StmtState -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmtvar =
@@ -150,6 +153,9 @@ readTime = readValue (\(_, buf, nullptr, sizeptr) -> bufferToCaltime nullptr buf
 
 readNumber = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined, buf, nullptr, sizeptr))
                        strToSqlNum
+
+readBinary = readValue (\(_, buf, nullptr, sizeptr) -> bufferToByteString buf nullptr sizeptr)
+                       SqlByteString
 
 readValue ::    (ColumnInfo -> IO (Maybe a))
              -> (a -> SqlValue)

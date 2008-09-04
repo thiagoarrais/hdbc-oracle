@@ -33,11 +33,13 @@ See 'formatErrorCodeDesc' for the set of possible values for the OCI error numbe
 > import Database.HDBC.Oracle.Util (mkUTCTime)
 > import Foreign
 > import Foreign.C
+> import Foreign.Marshal.Array
 > import Control.Monad
 > import Control.Exception
 > import Data.Dynamic
 > import System.Time
 > import Data.Time
+> import Data.ByteString (pack)
 
 
 
@@ -677,6 +679,17 @@ Otherwise, run the IO action to extract a value from the buffer and return Just 
 >             pokeByteOff (castPtr bufferPtr) retsize nullByte
 >             val <- peekCString (castPtr bufferPtr)
 >             return (Just val)
+
+> bufferToByteString bufFPtr nullFPtr sizeFPtr =
+>   withForeignPtr nullFPtr $ \nullIndPtr -> do
+>     nullInd <- liftM cShort2Int (peek nullIndPtr)
+>     if (nullInd == -1)  -- -1 == null
+>       then return Nothing
+>       else do
+>         withForeignPtr bufFPtr $ \bufferPtr ->
+>           withForeignPtr sizeFPtr $ \retSizePtr -> do
+>             retsize <- liftM cUShort2Int (peek retSizePtr)
+>             return . Just . pack =<< peekArray retsize (castPtr bufferPtr)
 
 
 | Oracle's excess-something-or-other encoding for years:
