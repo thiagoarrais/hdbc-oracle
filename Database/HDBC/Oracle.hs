@@ -39,7 +39,8 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_SQLT_AVC, oci_SQLT_DAT,
                                           oci_SQLT_NUM, oci_SQLT_FLT,
                                           oci_SQLT_LNG, oci_SQLT_STR,
-                                          oci_SQLT_BIN)
+                                          oci_SQLT_BIN, oci_SQLT_INT,
+                                          oci_SQLT_DATE)
 
 data StmtState = Prepared StmtHandle
                | Executed StmtHandle [ConversionInfo] -- info on how to convert each value into a SqlValue
@@ -126,8 +127,9 @@ getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATT
 dtypeConversion :: [([CInt], ConversionInfo)]
 dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG],
                         (oci_SQLT_STR, 16000, readString)),
-                   ([oci_SQLT_DAT], (oci_SQLT_DAT, 7, readTime)),
-                   ([oci_SQLT_NUM], (oci_SQLT_STR, 40, readNumber)),
+                   ([oci_SQLT_DAT, oci_SQLT_DATE], (oci_SQLT_DAT, 7, readTime)),
+                   ([oci_SQLT_NUM, oci_SQLT_FLT, oci_SQLT_INT],
+                        (oci_SQLT_STR, 40, readNumber)),
                    ([oci_SQLT_BIN], (oci_SQLT_BIN, 2000, readBinary))]
 
 fetchOracleRow :: OracleConnection -> MVar StmtState -> IO (Maybe [SqlValue])
