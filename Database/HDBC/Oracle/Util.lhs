@@ -1,9 +1,9 @@
 
 |
 Module      :  Database.Util
-Copyright   :  (c) 2004 Oleg Kiselyov, Alistair Bayley
+Copyright   :  (c) 2004 Oleg Kiselyov, Alistair Bayley, (c) 2008 Thiago Arrais
 License     :  BSD-style
-Maintainer  :  oleg@pobox.com, alistair@abayley.org
+Maintainer  :  thiago.arrais@gmail.com
 Stability   :  experimental
 Portability :  non-portable
 
@@ -29,6 +29,7 @@ Utility functions. Mostly used in database back-ends, and tests.
 > import Data.Time
 > import Text.Printf
 
+> import Database.HDBC.Statement (SqlValue(..))
 
 MyShow requires overlapping AND undecidable instances.
 
@@ -260,3 +261,30 @@ Parses ISO format datetimes, and also the variation that PostgreSQL uses.
 >     ++ ":" ++ zeroPad 2 minute
 >     ++ ":" ++ secs
 >     ++ "+00" ++ suffix
+
+> search :: (a -> Bool) -> [(a, b)] -> Maybe b
+> search _ [] = Nothing
+> search p ((x,y):xys) = if p x then Just y else search p xys
+
+> sqlMultiply :: SqlValue -> Integer -> SqlValue
+> sqlMultiply (SqlDouble x) y = SqlDouble (x * fromInteger y)
+> sqlMultiply (SqlInteger n) m = SqlInteger (m * n)
+
+> strToSqlNum :: String -> SqlValue
+> strToSqlNum str = sqlMultiply sqlabs sign
+>     where sqlabs = if any (not . isDigit) strabs then SqlDouble (strToDouble strabs) else SqlInteger (strToInt strabs)
+>           strabs = dropWhile (== '-') str
+>           sign = if strabs == str then 1 else -1
+
+> strToInt :: String -> Integer
+> strToInt [] = 0
+> strToInt (c:cs) = toInteger (digitToInt c) * 10 ^ length cs + strToInt cs
+
+> splitBy :: (a -> Bool) -> [a] -> ([a], [a])
+> splitBy p xs = (takeWhile (not.p) xs, tail (dropWhile (not.p) xs))
+
+> strToDouble :: String -> Double
+> strToDouble str = fromIntegral integral + fraction
+>     where (istr, fstr) = splitBy (not . isDigit) str
+>           integral = strToInt istr
+>           fraction = fromIntegral (strToInt fstr) * 10 ^^ (-(length fstr))

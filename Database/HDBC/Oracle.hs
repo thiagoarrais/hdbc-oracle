@@ -11,6 +11,7 @@ import Foreign.ForeignPtr(withForeignPtr)
 
 import Database.HDBC (IConnection(..), SqlValue)
 import Database.HDBC.Statement (Statement(..), SqlValue(..))
+import Database.HDBC.Oracle.Util (search, strToSqlNum)
 import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           ServerHandle, SessHandle, StmtHandle,
                                           ColumnInfo, ParamHandle, catchOCI,
@@ -126,11 +127,6 @@ dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG],
                    ([oci_SQLT_DAT], (oci_SQLT_DAT, 7, readTime)),
                    ([oci_SQLT_NUM], (oci_SQLT_STR, 40, readNumber))]
 
--- TODO: Check if this exists in Prelude and move to utilities module
-search :: (a -> Bool) -> [(a, b)] -> Maybe b
-search _ [] = Nothing
-search p ((x,y):xys) = if p x then Just y else search p xys
-
 fetchOracleRow :: OracleConnection -> MVar StmtState -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmtvar =
     let fetch (Prepared _) = fail "Trying to fetch before executing statement"
@@ -151,30 +147,6 @@ readString = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined
 
 readTime = readValue (\(_, buf, nullptr, sizeptr) -> bufferToCaltime nullptr buf)
                      (\time -> let TOD secs _ = toClockTime time in SqlEpochTime secs)
-
--- TODO: Move those to an utilities module
-sqlMultiply :: SqlValue -> Integer -> SqlValue
-sqlMultiply (SqlDouble x) y = SqlDouble (x * fromInteger y)
-sqlMultiply (SqlInteger n) m = SqlInteger (m * n)
-
-strToSqlNum :: String -> SqlValue
-strToSqlNum str = sqlMultiply sqlabs sign
-    where sqlabs = if any (not . isDigit) strabs then SqlDouble (strToDouble strabs) else SqlInteger (strToInt strabs)
-          strabs = dropWhile (== '-') str
-          sign = if strabs == str then 1 else -1
-
-strToInt :: String -> Integer
-strToInt [] = 0
-strToInt (c:cs) = toInteger (digitToInt c) * 10 ^ length cs + strToInt cs
-
-splitBy :: (a -> Bool) -> [a] -> ([a], [a])
-splitBy p xs = (takeWhile (not.p) xs, tail (dropWhile (not.p) xs))
-
-strToDouble :: String -> Double
-strToDouble str = fromIntegral integral + fraction
-    where (istr, fstr) = splitBy (not . isDigit) str
-          integral = strToInt istr
-          fraction = fromIntegral (strToInt fstr) * 10 ^^ (-(length fstr))
 
 readNumber = readValue (\(_, buf, nullptr, sizeptr) -> bufferToString (undefined, buf, nullptr, sizeptr))
                        strToSqlNum
