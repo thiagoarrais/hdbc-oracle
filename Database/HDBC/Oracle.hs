@@ -40,7 +40,7 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_SQLT_NUM, oci_SQLT_FLT,
                                           oci_SQLT_LNG, oci_SQLT_STR,
                                           oci_SQLT_BIN, oci_SQLT_INT,
-                                          oci_SQLT_DATE)
+                                          oci_SQLT_RDD, oci_SQLT_DATE)
 
 data StmtState = Prepared StmtHandle
                | Executed StmtHandle [ConversionInfo] -- info on how to convert each value into a SqlValue
@@ -125,7 +125,8 @@ executeOracle (OracleConnection _ err conn) stmtvar bindvars =
 getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
 
 dtypeConversion :: [([CInt], ConversionInfo)]
-dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG],
+dtypeConversion = [([oci_SQLT_CHR, oci_SQLT_AFC, oci_SQLT_AVC, oci_SQLT_LNG,
+                     oci_SQLT_RDD],
                         (oci_SQLT_STR, 16000, readString)),
                    ([oci_SQLT_DAT, oci_SQLT_DATE], (oci_SQLT_DAT, 7, readTime)),
                    ([oci_SQLT_NUM, oci_SQLT_FLT, oci_SQLT_INT],

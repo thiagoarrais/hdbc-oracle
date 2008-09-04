@@ -166,6 +166,8 @@ to change these in a hurry (that would break compiled programs, wouldn't it?).
 > oci_SQLT_AFC = 96
 > oci_SQLT_AVC :: CInt
 > oci_SQLT_AVC = 97
+> oci_SQLT_RDD :: CInt
+> oci_SQLT_RDD = 104
 > oci_SQLT_RSET :: CInt
 > oci_SQLT_RSET = 116
 > oci_SQLT_DATE :: CInt
