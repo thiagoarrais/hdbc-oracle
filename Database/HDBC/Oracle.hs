@@ -2,7 +2,7 @@ module Database.HDBC.Oracle (connectOracle) where
 
 import Control.Concurrent.MVar(MVar, modifyMVar, modifyMVar_, newMVar, withMVar)
 import Data.Char(digitToInt, isDigit)
-import Data.Maybe(fromJust, isNothing)
+import Data.Maybe(isNothing)
 import System.Time(ClockTime(TOD), toClockTime)
 import Foreign.C.String(CString, peekCString)
 import Foreign.C.Types(CInt)
@@ -19,8 +19,8 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           serverAttach, serverDetach,
                                           handleAlloc, handleFree, getParam,
                                           setHandleAttr, getHandleAttr,
-                                          setHandleAttrString, stmtPrepare,
-                                          stmtExecute, stmtFetch,
+                                          setHandleAttrString, getHandleAttrString,
+                                          stmtPrepare, stmtExecute, stmtFetch,
                                           sessionBegin, sessionEnd,
                                           descriptorFree, formatErrorMsg,
                                           bufferToString, bufferToCaltime,
@@ -43,10 +43,11 @@ import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
                                           oci_SQLT_RDD, oci_SQLT_DATE)
 
 data StmtState = Prepared StmtHandle
-               | Executed StmtHandle [ConversionInfo] -- info on how to convert each value into a SqlValue
+               | Executed StmtHandle [ColumnDetails]
                | Finished
 
-type ConversionInfo = (CInt, Int, ColumnInfo -> IO SqlValue)
+type ConversionInfo = (CInt, Int, ColumnInfo -> IO SqlValue) -- Output type, Size, Reading function
+type ColumnDetails = (CInt, Int, ColumnInfo -> IO SqlValue, String) -- colinfo + columnname
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
 
@@ -117,8 +118,10 @@ executeOracle (OracleConnection _ err conn) stmtvar bindvars =
             convinfos <- flip mapM [1..numColumns] $ \col -> do
                 colHandle <- getParam err stmt col
                 itype <- getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_DATA_TYPE
+                colname <- getHandleAttrString err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
                 free colHandle
-                return . fromJust . search (itype `elem`) $ dtypeConversion
+                let Just (otype, size, reader) = search (itype `elem`) dtypeConversion
+                return (otype, size, reader, colname)
             return (Executed stmt convinfos, 0)
     in modifyMVar stmtvar exec
 
@@ -137,7 +140,7 @@ fetchOracleRow :: OracleConnection -> MVar StmtState -> IO (Maybe [SqlValue])
 fetchOracleRow (OracleConnection _ err _) stmtvar =
     let fetch (Prepared _) = fail "Trying to fetch before executing statement"
         fetch (Executed stmt convinfos) = do
-            readCols <- mapM (\(col, (otype, size, reader)) ->
+            readCols <- mapM (\(col, (otype, size, reader, _)) ->
                                   return . reader =<< defineByPos err stmt col size otype)
                              (zip [1..(length convinfos)] convinfos)
             fr <- stmtFetch err stmt
@@ -171,12 +174,7 @@ finishOracle = flip modifyMVar_ (\stmtstate -> free (handle stmtstate) >> return
 getOracleColumnNames :: OracleConnection -> MVar StmtState -> IO [String]
 getOracleColumnNames (OracleConnection _ err _) stmtvar =
     let getNames (Prepared _) = fail "Trying to read column names before executing"
-        getNames (Executed stmt convinfos) =
-            flip mapM [1..(length convinfos)] $ \col -> do
-                colHandle <- getParam err stmt col
-                str <- peekCString =<< getHandleAttr err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
-                free colHandle
-                return str
+        getNames (Executed stmt convinfos) = return $ map (\(_, _, _, name) -> name) convinfos
     in withMVar stmtvar getNames
 
 createHandle htype env = handleAlloc htype (castPtr env) >>= return.castPtr

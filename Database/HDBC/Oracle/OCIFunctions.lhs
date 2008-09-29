@@ -298,6 +298,14 @@ See 'dbLogon' and 'getHandleAttr' for example usage.
 >     then throwOCI (OCIException rc msg)
 >     else peek retval
 
+> testForErrorWithString :: CInt -> String -> Ptr (Ptr CChar) -> Ptr Int -> IO String
+> testForErrorWithString rc msg retval sizePtr = do
+>   if rc < 0
+>     then throwOCI (OCIException rc msg)
+>     else do size <- peek sizePtr
+>             str  <- peek retval
+>             peekCStringLen (str, size)
+
 
 ---------------------------------------------------------------------------------
 -- ** Allocating Handles (i.e. creating OCI data structures, and memory management)
@@ -345,6 +353,12 @@ Deref'ing it returns that value immediately, rather than a Ptr to that value.
 >   -- 3rd arg has type Ptr OCIBuffer.
 >   rc <- ociAttrGet ocihandle handleType (castPtr ptr) nullPtr attrType err
 >   testForErrorWithPtr rc "getAttrHandle" ptr
+
+> getHandleAttrString :: ErrorHandle -> OCIHandle -> CInt -> CInt -> IO String
+> getHandleAttrString err ocihandle handleType attrType = alloca $ \ptr -> alloca $ \sizePtr -> do
+>   -- 3rd arg has type Ptr OCIBuffer.
+>   rc <- ociAttrGet ocihandle handleType (castPtr ptr) (castPtr sizePtr) attrType err
+>   testForErrorWithString rc "getHandleAttrString" ptr sizePtr
 
 > getParam :: ErrorHandle -> StmtHandle -> Int -> IO ParamHandle
 > getParam err stmt posn = alloca $ \ptr -> do
