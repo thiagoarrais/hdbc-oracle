@@ -1,6 +1,7 @@
 module Database.HDBC.Oracle (connectOracle) where
 
 import Control.Concurrent.MVar(MVar, modifyMVar, modifyMVar_, newMVar, withMVar)
+import Control.Exception (evaluate, throwDyn)
 import Data.Char(digitToInt, isDigit)
 import Data.Maybe(isNothing)
 import System.Time(ClockTime(TOD), toClockTime)
@@ -10,7 +11,7 @@ import Foreign.Ptr(castPtr)
 import Foreign.ForeignPtr(withForeignPtr)
 
 import Database.HDBC (IConnection(..), SqlValue)
-import Database.HDBC.Statement (Statement(..), SqlValue(..))
+import Database.HDBC.Statement (Statement(..), SqlValue(..), SqlError(..))
 import Database.HDBC.Oracle.Util (search, strToSqlNum)
 import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           ServerHandle, SessHandle, StmtHandle,
@@ -22,7 +23,7 @@ import Database.HDBC.Oracle.OCIFunctions (EnvHandle, ErrorHandle, ConnHandle,
                                           setHandleAttrString, getHandleAttrString,
                                           stmtPrepare, stmtExecute, stmtFetch,
                                           sessionBegin, sessionEnd,
-                                          descriptorFree, formatErrorMsg,
+                                          descriptorFree, getOCIErrorMsg,
                                           bufferToString, bufferToCaltime,
                                           bufferToByteString)
 import Database.HDBC.Oracle.OCIConstants (oci_HTYPE_ERROR, oci_HTYPE_SERVER,
@@ -123,7 +124,9 @@ executeOracle (OracleConnection _ err conn) stmtvar bindvars =
                 let Just (otype, size, reader) = search (itype `elem`) dtypeConversion
                 return (otype, size, reader, colname)
             return (Executed stmt convinfos, 0)
-    in modifyMVar stmtvar exec
+    in catchOCI (modifyMVar stmtvar exec)
+                (\ociexc -> do (code, msg) <- getOCIErrorMsg (castPtr err) oci_HTYPE_ERROR
+                               evaluate $ throwDyn (SqlError "" (fromIntegral code) msg))
 
 getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
 
