@@ -93,7 +93,7 @@ logToServer srv user pswd env err = do
     setHandleAttr err (castPtr conn) oci_HTYPE_SVCCTX (castPtr srv) oci_ATTR_SERVER
     setHandleAttrString err (castPtr session) oci_HTYPE_SESSION user oci_ATTR_USERNAME
     setHandleAttrString err (castPtr session) oci_HTYPE_SESSION pswd oci_ATTR_PASSWORD
-    sessionBegin err conn session oci_CRED_RDBMS
+    rethrowOCI err $ sessionBegin err conn session oci_CRED_RDBMS
     setHandleAttr err (castPtr conn) oci_HTYPE_SVCCTX (castPtr session) oci_ATTR_SESSION
     setHandleAttr err (castPtr conn) oci_HTYPE_SVCCTX (castPtr trans) oci_ATTR_TRANS
     return conn
