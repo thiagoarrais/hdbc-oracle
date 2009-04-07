@@ -71,6 +71,11 @@ instance IConnection OracleConnection where
 handle (Prepared stmt) = stmt
 handle (Executed stmt _) = stmt
 
+rethrowOCI errorHandle action =
+    catchOCI action
+             (\exc -> do (code, msg) <- getOCIErrorMsg (castPtr errorHandle) oci_HTYPE_ERROR
+                         evaluate $ throwDyn (SqlError "" (fromIntegral code) msg))
+
 connectOracle :: String -> String -> String -> IO OracleConnection
 connectOracle user pswd dbname = do
     env <- envCreate
@@ -124,9 +129,7 @@ executeOracle (OracleConnection _ err conn) stmtvar bindvars =
                 let Just (otype, size, reader) = search (itype `elem`) dtypeConversion
                 return (otype, size, reader, colname)
             return (Executed stmt convinfos, 0)
-    in catchOCI (modifyMVar stmtvar exec)
-                (\ociexc -> do (code, msg) <- getOCIErrorMsg (castPtr err) oci_HTYPE_ERROR
-                               evaluate $ throwDyn (SqlError "" (fromIntegral code) msg))
+    in rethrowOCI err $ modifyMVar stmtvar exec
 
 getNumColumns err stmt = getHandleAttr err (castPtr stmt) oci_HTYPE_STMT oci_ATTR_PARAM_COUNT
 
