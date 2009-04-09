@@ -109,11 +109,11 @@ disconnectOracle (OracleConnection env err conn) = do
     free err
     free env
 
-prepareOracle oraconn@(OracleConnection env err conn) query = do
-    stmthandle <- createHandle oci_HTYPE_STMT env
-    stmtPrepare err stmthandle query
-    stmtvar <- newMVar (OracleStatement Prepared stmthandle)
-    return (statementFor oraconn stmtvar query)
+prepareOracle oraconn@(OracleConnection env err conn) query = rethrowOCI err
+    (do stmthandle <- createHandle oci_HTYPE_STMT env
+        stmtPrepare err stmthandle query
+        stmtvar <- newMVar (OracleStatement Prepared stmthandle)
+        return (statementFor oraconn stmtvar query))
 
 executeOracle :: OracleConnection -> MVar OracleStatement -> [SqlValue] -> IO Integer
 executeOracle (OracleConnection _ err conn) stmtvar bindvars =
