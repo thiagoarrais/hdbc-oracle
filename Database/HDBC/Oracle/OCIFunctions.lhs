@@ -34,6 +34,7 @@ See 'formatErrorCodeDesc' for the set of possible values for the OCI error numbe
 > import Foreign
 > import Foreign.C
 > import Foreign.Marshal.Array
+> import Unsafe.Coerce
 > import Control.Monad
 > import Control.Exception
 > import Data.Dynamic
@@ -351,6 +352,7 @@ Deref'ing it returns that value immediately, rather than a Ptr to that value.
 > getHandleAttr :: (Storable a) => ErrorHandle -> OCIHandle -> CInt -> CInt -> IO a
 > getHandleAttr err ocihandle handleType attrType = alloca $ \ptr -> do
 >   -- 3rd arg has type Ptr OCIBuffer.
+>   poke ptr (unsafeCoerce 0)
 >   rc <- ociAttrGet ocihandle handleType (castPtr ptr) nullPtr attrType err
 >   testForErrorWithPtr rc "getAttrHandle" ptr
 
