@@ -51,7 +51,7 @@ data StmtState = Prepared
                | Finished
 
 type ConversionInfo = (CInt, Int, ColumnInfo -> IO SqlValue) -- Output type, Size, Reading function
-type ColumnDetails = (CInt, Int, ColumnInfo -> IO SqlValue, String) -- colinfo + columnname
+type ColumnDetails = (IO SqlValue, String) -- read action + columnname
 
 data OracleConnection = OracleConnection EnvHandle ErrorHandle ConnHandle
 
@@ -127,7 +127,8 @@ executeOracle (OracleConnection _ err conn) stmtvar bindvars =
                 colname <- getHandleAttrString err (castPtr colHandle) oci_DTYPE_PARAM oci_ATTR_NAME
                 free colHandle
                 let Just (otype, size, reader) = search (itype `elem`) dtypeConversion
-                return (otype, size, reader, colname)
+                colinfo <- defineByPos err stmthandle col size otype
+                return (reader colinfo, colname)
             return (OracleStatement (Executed convinfos) stmthandle, 0)
     in rethrowOCI err $ modifyMVar stmtvar exec
 
@@ -146,9 +147,7 @@ fetchOracleRow :: OracleConnection -> MVar OracleStatement -> IO (Maybe [SqlValu
 fetchOracleRow (OracleConnection _ err _) stmtvar =
     let fetch (OracleStatement Prepared _) = fail "Trying to fetch before executing statement"
         fetch (OracleStatement (Executed convinfos) stmt) = do
-            readCols <- mapM (\(col, (otype, size, reader, _)) ->
-                                  return . reader =<< defineByPos err stmt col size otype)
-                             (zip [1..(length convinfos)] convinfos)
+            let readCols = map fst convinfos
             fr <- stmtFetch err stmt
             if fr == oci_NO_DATA
              then return Nothing
@@ -183,7 +182,7 @@ finishOracle = flip modifyMVar_
 getOracleColumnNames :: OracleConnection -> MVar OracleStatement -> IO [String]
 getOracleColumnNames (OracleConnection _ err _) stmtvar =
     let getNames (OracleStatement Prepared _) = fail "Trying to read column names before executing"
-        getNames (OracleStatement (Executed convinfos) _) = return $ map (\(_, _, _, name) -> name) convinfos
+        getNames (OracleStatement (Executed convinfos) _) = return $ map snd convinfos
     in withMVar stmtvar getNames
 
 createHandle htype env = handleAlloc htype (castPtr env) >>= return.castPtr
